@@ -9,3 +9,9 @@ git add .     #선택한 프로젝트 폴더 내의 모든 파일 관리
 git status    #상태확인
 
 git commit -m "주석"     #커밋
+
+
+7. 업로드하기
+git remote add origin https://github.com/go2basic/code.go2basic.public.git
+
+git push -u origin master
