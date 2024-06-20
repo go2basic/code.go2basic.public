@@ -30,33 +30,54 @@ conn.commit()
 
 def insert_data(df):
     for _, row in df.iterrows():
-        c.execute('INSERT INTO locations (departure_name, departure_address, arrival_name, arrival_address) VALUES (?, ?, ?, ?)', 
-                  (row[0], row[1], row[2], row[3]))
+        c.execute('SELECT COUNT(*) FROM locations WHERE departure_address = ? AND arrival_address = ?', 
+                  (row[1], row[3]))
+        count = c.fetchone()[0]
+        if count == 0:
+            c.execute('INSERT INTO locations (departure_name, departure_address, arrival_name, arrival_address) VALUES (?, ?, ?, ?)', 
+                      (row[0], row[1], row[2], row[3]))
     conn.commit()
 
-# 네이버 API 설정
-naver_map_api_url = "https://naveropenapi.apigw.ntruss.com/map-direction/v1/driving"
-
-def calculate_distance_time_fuel(departure, arrival):
+def geocode(address):
+    # 주소를 위도와 경도로 변환하는 함수
+    url = f"https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query={address}"
     headers = {
-        "X-NCP-APIGW-API-KEY-ID": client_id,
-        "X-NCP-APIGW-API-KEY": client_secret,
+        'X-NCP-APIGW-API-KEY-ID': client_id,
+        'X-NCP-APIGW-API-KEY': client_secret
     }
-    params = {
-        "start": departure,
-        "goal": arrival,
-    }
-    response = requests.get(naver_map_api_url, headers=headers, params=params)
+    response = requests.get(url, headers=headers)
     data = response.json()
-    
-    if response.status_code == 200 and 'route' in data:
-        summary = data['route']['traoptimal'][0]['summary']
-        distance = summary['distance']
-        duration = summary['duration']
-        fuel_cost = summary['fuelPrice']
-        return distance, duration, fuel_cost
+    # print(data)
+
+    if data['status'] == 'OK' and int(data['meta']['totalCount']) > 0:
+        # 결과가 있는 경우 첫 번째 결과의 위도와 경도를 반환
+        location = data['addresses'][0]
+        latitude = location['y']
+        longitude = location['x']
+        return latitude, longitude
     else:
-        return None, None, None
+        return None, None
+
+def calculate_distance(start_lat, start_lng, end_lat, end_lng):
+
+    # print(start_lat, ", ", start_lng, ", ", end_lat, ", ", end_lng)
+    # 네이버 지도 API를 통해 출발지와 도착지 간의 거리 계산
+    url = f"https://naveropenapi.apigw.ntruss.com/map-direction/v1/driving?start={start_lng},{start_lat}&goal={end_lng},{end_lat}&option=trafast&cartype=3&fueltype=diesel&mileage=9.3"
+    headers = {
+        'X-NCP-APIGW-API-KEY-ID': client_id,
+        'X-NCP-APIGW-API-KEY': client_secret
+    }
+    response = requests.get(url, headers=headers)
+    data = response.json()
+
+    #print(data)
+    # 거리와 소요시간을 반환 
+    distance = data['route']['trafast'][0]['summary']['distance']
+    duration = data['route']['trafast'][0]['summary']['duration']
+    toll_fee = data['route']['trafast'][0]['summary']['tollFare']
+    taxi_fare = data['route']['trafast'][0]['summary']['taxiFare']
+    fuel_price = data['route']['trafast'][0]['summary']['fuelPrice']
+    return distance, duration, toll_fee,taxi_fare,fuel_price
 
 def update_data(location_id, distance, duration, fuel_cost):
     c.execute('''
@@ -72,7 +93,6 @@ st.title("운송 정보 관리")
 tabs = st.tabs(["엑셀 업로드", "거리 계산", "지도 표시"])
 
 with tabs[0]:
-    st.header("엑셀 파일 업로드")
     uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=["xlsx"])
     if uploaded_file:
         df = pd.read_excel(uploaded_file)
@@ -81,48 +101,57 @@ with tabs[0]:
         st.success("데이터가 데이터베이스에 성공적으로 삽입되었습니다.")
 
 with tabs[1]:
-    st.header("거리 계산")
+    
     query = "SELECT * FROM locations"
     locations_df = pd.read_sql(query, conn)
-    st.write("등록된 출발지와 도착지:", locations_df)
-    
-    if st.button("거리 계산"):
-        results = []
-        for _, row in locations_df.iterrows():
-            departure = row['departure_address']
-            arrival = row['arrival_address']
-            distance, duration, fuel_cost = calculate_distance_time_fuel(departure, arrival)
-            if distance is not None and duration is not None and fuel_cost is not None:
-                update_data(row['id'], distance, duration, fuel_cost)
-                results.append([row['departure_name'], row['arrival_name'], distance, duration, fuel_cost])
-        
-        results_df = pd.DataFrame(results, columns=["출발지", "도착지", "거리(m)", "시간(ms)", "주유비(원)"])
-        st.write("계산된 결과:", results_df)
+    table_placeholder = st.empty()
+    table_placeholder.write(locations_df)
+
+    # 버튼을 가로로 배치하기 위해 컬럼을 나눔
+    col1, col2 = st.columns([3, 1])  # 첫 번째 열은 버튼들을 포함할 공간, 두 번째 열은 여백용
+
+    with col1:
+        if st.button("거리 계산"):
+            query_di = "SELECT * FROM locations where distance is null"
+            locations_df_upd = pd.read_sql(query_di, conn)
+
+            for _, row in locations_df_upd.iterrows():
+                departure = row['departure_address']
+                arrival   = row['arrival_address']
+                departurelat, departurelng = geocode(departure)
+                arrivallat,   arrivallng   = geocode(arrival)
+                
+                distance, duration, toll_fee, taxi_fare, fuel_price = calculate_distance(departurelat, departurelng, arrivallat, arrivallng)
+                if distance is not None and duration is not None and fuel_price is not None:
+                    update_data(row['id'], distance, duration, fuel_price)
+            
+            # 업데이트된 데이터 다시 읽기
+            locations_df = pd.read_sql(query, conn)
+            table_placeholder.write(locations_df)
+
+    with col2:
+        # 전체 데이터 삭제
+        if st.button("데이터 삭제"):
+            c.execute('DELETE FROM locations')
+            conn.commit()
+            
+            # 업데이트된 데이터 다시 읽기
+            locations_df = pd.read_sql(query, conn)
+            table_placeholder.write(locations_df)
 
 with tabs[2]:
-    st.header("지도 표시")
+    st.subheader("지도 표시")
+    # map_data 초기화
+    map_data = pd.DataFrame(columns=['lat', 'lon', 'name'])
     locations_df = pd.read_sql(query, conn)
     map_center = [37.5665, 126.9780]  # 서울의 위도와 경도
     m = folium.Map(location=map_center, zoom_start=11)
 
     for _, row in locations_df.iterrows():
         arrival_address = row['arrival_address']
-        # 여기에 위도와 경도 추출 로직 추가
-        # 네이버 지오코딩 API를 사용할 수 있습니다.
-        geocode_url = f"https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode"
-        headers = {
-            "X-NCP-APIGW-API-KEY-ID": client_id,
-            "X-NCP-APIGW-API-KEY": client_secret,
-        }
-        params = {
-            "query": arrival_address
-        }
-        response = requests.get(geocode_url, headers=headers, params=params)
-        geocode_data = response.json()
+        lat, lng = geocode(arrival_address)
         
-        if response.status_code == 200 and geocode_data['addresses']:
-            lat = geocode_data['addresses'][0]['y']
-            lon = geocode_data['addresses'][0]['x']
-            folium.Marker([lat, lon], tooltip=row['arrival_name']).add_to(m)
+        if lat is not None and lng is not None:
+            map_data = pd.concat([map_data, pd.DataFrame({'lat': [float(lat)], 'lon': [float(lng)], 'name': [row['arrival_name']]})], ignore_index=True)
     
-    folium_static(m)
+    st.map(map_data)
