@@ -17,12 +17,19 @@ c = conn.cursor()
 
 # 암호화 설정
 c.execute(f"PRAGMA key='{db_encryption_key}';")
-c.execute('''CREATE TABLE IF NOT EXISTS locations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                departure_name TEXT,
-                departure_address TEXT,
-                arrival_name TEXT,
-                arrival_address TEXT)''')
+
+# 테이블 생성
+c.execute('''
+CREATE TABLE IF NOT EXISTS locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    departure_name TEXT,
+    departure_address TEXT,
+    arrival_name TEXT,
+    arrival_address TEXT,
+    distance INTEGER,
+    duration INTEGER,
+    fuel_cost INTEGER
+)''')
 conn.commit()
 
 def insert_data(df):
@@ -55,6 +62,14 @@ def calculate_distance_time_fuel(departure, arrival):
     else:
         return None, None, None
 
+def update_data(location_id, distance, duration, fuel_cost):
+    c.execute('''
+    UPDATE locations
+    SET distance = ?, duration = ?, fuel_cost = ?
+    WHERE id = ?
+    ''', (distance, duration, fuel_cost, location_id))
+    conn.commit()
+
 # Streamlit 앱 구성
 st.title("운송 정보 관리")
 
@@ -81,7 +96,9 @@ with tabs[1]:
             departure = row['departure_address']
             arrival = row['arrival_address']
             distance, duration, fuel_cost = calculate_distance_time_fuel(departure, arrival)
-            results.append([row['departure_name'], row['arrival_name'], distance, duration, fuel_cost])
+            if distance is not None and duration is not None and fuel_cost is not None:
+                update_data(row['id'], distance, duration, fuel_cost)
+                results.append([row['departure_name'], row['arrival_name'], distance, duration, fuel_cost])
         
         results_df = pd.DataFrame(results, columns=["출발지", "도착지", "거리(m)", "시간(ms)", "주유비(원)"])
         st.write("계산된 결과:", results_df)
