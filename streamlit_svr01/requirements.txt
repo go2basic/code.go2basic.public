@@ -1,7 +1,7 @@
-streamlit==1.18.0
-pandas==1.5.3
-requests==2.28.1
-folium==0.13.0
-streamlit-folium==0.8.3
-python-dotenv==1.0.0
-sqlcipher3==0.4.5
+streamlit
+pandas
+requests
+folium
+streamlit-folium
+python-dotenv
+sqlcipher3
