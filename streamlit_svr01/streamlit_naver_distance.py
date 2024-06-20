@@ -9,14 +9,10 @@ from streamlit_folium import folium_static
 # 환경 변수 로드
 client_id = st.secrets["naver"]["client_id"]
 client_secret = st.secrets["naver"]["client_secret"]
-db_encryption_key = st.secrets["database"]["encryption_key"]
 
-# SQLite 데이터베이스 설정 및 암호화
-conn = sqlite3.connect('locations_encrypted.db')
+# SQLite 데이터베이스 설정
+conn = sqlite3.connect('locations.db')
 c = conn.cursor()
-
-# 암호화 설정
-c.execute(f"PRAGMA key='{db_encryption_key}';")
 
 # 테이블 생성
 c.execute('''
